@@ -62,7 +62,7 @@ public class OpportunitiesServiceImpl
 		
 		// Create Invoices from the given opportunities
 		List<SObject> invoices = new List<SObject>();
-		for (Opportunity opportunityRecord : (List<Opportunity>) opps.getRecords())
+		for (Opportunity opportunityRecord : (List<Opportunity>) opps.getObjects())
 		{
 			Invoice__c invoice = new Invoice__c();
 			invoice.Account__c = opportunityRecord.AccountId;
