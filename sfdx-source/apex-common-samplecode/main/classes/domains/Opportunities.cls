@@ -36,24 +36,45 @@ public class Opportunities extends fflib_SObjectDomain
 	{
 		return (IOpportunities) Application.Domain.newInstance(recordIdSet);
 	}
-	
+
 	public Opportunities(List<Opportunity> sObjectList)
 	{
 		// Domain classes are initialised with lists to enforce nullification throughout
-		super(sObjectList);
+		super(sObjectList, Schema.Opportunity.SObjectType);
 	}
-	
+
+	/**
+	 * Adds the given errormessage to the Opportunity.AccountId field
+	 *
+	 * @param errorMessage The error message to add
+	 */
+	public void addAccountError(String errorMessage)
+	{
+		addFieldError(Schema.Opportunity.AccountId, errorMessage);
+	}
+
+	/**
+	 * Adds the given errormessage to the Opportunity.Type field
+	 *
+	 * @param errorMessage The error message to add
+	 */
+	public void addTypeError(String errorMessage)
+	{
+		addFieldError(Schema.Opportunity.Type, errorMessage);
+	}
+
+	// todo - refactor
 	public void generate(InvoicingService.InvoiceFactory invoiceFactory)
 	{
 		// Utilise InvoiceFactory to create invoices from Opportunity details
-		for(Opportunity opportunity : (List<Opportunity>) Records)
+		for (Opportunity opportunity : (List<Opportunity>) Records)
 		{
 			InvoicingService.Invoice invoice = new InvoicingService.Invoice();
 			invoice.Account = opportunity.AccountId;
 			invoice.Description = opportunity.Description;
 			invoice.InvoiceDate = opportunity.CloseDate.addDays(14);
 			invoice.Lines = new List<InvoicingService.InvoiceLine>();
-			for(OpportunityLineItem lineItem : opportunity.OpportunityLineItems)
+			for (OpportunityLineItem lineItem : opportunity.OpportunityLineItems)
 			{
 				InvoicingService.InvoiceLine invoiceLineItem = new InvoicingService.InvoiceLine();
 				invoiceLineItem.Description = lineItem.Description;
@@ -61,104 +82,107 @@ public class Opportunities extends fflib_SObjectDomain
 				invoiceLineItem.UnitPrice = lineItem.UnitPrice;
 				invoiceLineItem.Quantity = lineItem.Quantity;
 				invoice.Lines.add(invoiceLineItem);
-			}			
+			}
 			invoiceFactory.add(invoice);
 		}
 	}
-	
-	public override void onApplyDefaults()
+
+	/**
+	 * Get the AccountId values
+	 *
+	 * @return All values of the Opportunity.AccountId field.
+	 */
+	public Set<Id> getAccountIds()
 	{
-		// Apply defaults to Opportunities
-		for(Opportunity opportunity : (List<Opportunity>) Records)
+		Set<Id> result = new Set<Id>();
+		for (Opportunity opportunity : (List<Opportunity>) getRecords())
 		{
-			opportunity.DiscountType__c = OpportunitySettings__c.getInstance().DiscountType__c;						
+			if (opportunity.AccountId != null)
+			{
+				result.add(opportunity.AccountId);
+			}
+		}
+		return result;
+	}
+
+	public List<OpportunityLineItem> getLineItems()
+	{
+		List<OpportunityLineItem> result = new List<OpportunityLineItem>();
+		for (Opportunity record : (List<Opportunity>) getRecords())
+		{
+			result.addAll(record.OpportunityLineItems);
+		}
+		return result;
+	}
+
+	public IOpportunities multiplyAmount(Decimal factor)
+	{
+		for (Opportunity record : (List<Opportunity>) getRecords())
+		{
+			record.Amount = record.Amount * factor;
+		}
+		return this;
+	}
+
+	public IOpportunities selectWithLineItems()
+	{
+		List<Opportunity> result = new List<Opportunity>();
+		for (Opportunity record : (List<Opportunity>) getRecords())
+		{
+			if (record.OpportunityLineItems != null &&
+					record.OpportunityLineItems.size() > 0)
+			{
+				result.add(record);
+			}
+		}
+		return newInstance(result);
+	}
+
+	public IOpportunities selectWithoutLineItems()
+	{
+		List<Opportunity> result = new List<Opportunity>();
+		for (Opportunity record : (List<Opportunity>) getRecords())
+		{
+			if (record.OpportunityLineItems == null ||
+					record.OpportunityLineItems.size() == 0)
+			{
+				result.add(record);
+			}
+		}
+		return newInstance(result);
+	}
+
+	public IOpportunities selectWithoutAccountsByExistingCustomers()
+	{
+		List<Opportunity> result = new List<Opportunity>();
+		for (Opportunity record : (List<Opportunity>) Records)
+		{
+			if (record.Type != null && record.Type.startsWith('Existing') && record.AccountId == null)
+			{
+				result.add(record);
+			}
+		}
+		return new Opportunities(result);
+	}
+
+	public IOpportunities setDiscountType(String value)
+	{
+		for (Opportunity opportunity : (List<Opportunity>) Records)
+		{
+			opportunity.DiscountType__c = value;
+		}
+		return this;
+	}
+
+
+	private void addFieldError(Schema.SObjectField sObjectField, String errorMessage)
+	{
+		for (Opportunity record : (List<Opportunity>) Records)
+		{
+			record.addError(error(errorMessage, record, sObjectField));
 		}
 	}
 
-	public override void onValidate()	
-	{
-		// Validate Opportunities
-		for(Opportunity opp : (List<Opportunity>) Records)
-		{
-			if(opp.Type!=null && opp.Type.startsWith('Existing') && opp.AccountId == null)
-			{
-				opp.AccountId.addError( error('You must provide an Account for Opportunities for existing Customers.', opp, Opportunity.AccountId) );					
-			}			
-		}		
-	}
-	
-	public override void onValidate(Map<Id,SObject> existingRecords)
-	{
-		// Validate changes to Opportunities
-		for(Opportunity opp : (List<Opportunity>) Records)
-		{
-			Opportunity existingOpp = (Opportunity) existingRecords.get(opp.Id);
-			if(opp.Type != existingOpp.Type)
-			{
-				opp.Type.addError( error('You cannot change the Opportunity type once it has been created.', opp, Opportunity.Type) );
-			}
-		}
-	}
-	
-	public override void onAfterInsert()
-	{
-		// Related Accounts
-		List<Id> accountIds = new List<Id>();
-		for (Opportunity opp : (List<Opportunity>) Records)
-		{
-			if (opp.AccountId != null)
-			{
-				accountIds.add(opp.AccountId);
-			}
-		}
-				
-		// Update last Opportunity activity on the related Accounts (via the Accounts domain class)
-		fflib_SObjectUnitOfWork uow = new fflib_SObjectUnitOfWork(new Schema.SObjectType[] { Account.SObjectType }); 
-		Accounts accounts = new Accounts([SELECT Id, Name FROM Account WHERE Id IN :accountIds]);
-		accounts.updateOpportunityActivity(uow);
-		uow.commitWork();				
-	}
-	
-	public void applyDiscount(Decimal discountPercentage, fflib_ISObjectUnitOfWork uow)
-	{
-		// Calculate discount factor
-		Decimal factor = calculateDiscountFactor(discountPercentage);
-
-		// Opportunity lines to apply discount to
-		List<OpportunityLineItem> linesToApplyDiscount = new List<OpportunityLineItem>();
-		
-		// Apply discount 
-		for(Opportunity opportunity : (List<Opportunity>) Records)
-		{
-			// Apply to the Opportunity Amount?
-			if(opportunity.OpportunityLineItems == null || 
-			   opportunity.OpportunityLineItems.size()==0)
-			{
-				// Adjust the Amount on the Opportunity if no lines
-				opportunity.Amount = opportunity.Amount * factor;
-				uow.registerDirty(opportunity);
-			}
-			else
-			{
-				// Collect lines to apply discount to
-				linesToApplyDiscount.addAll(opportunity.OpportunityLineItems);
-			}
-		}		
-		
-		// Apply discount to lines
-		IOpportunityLineItems lineItems = 
-			(IOpportunityLineItems) Application.Domain.newInstance(linesToApplyDiscount);
-		lineItems.applyDiscount(this, discountPercentage, uow);
-	}
-	
-	public static Decimal calculateDiscountFactor(Decimal discountPercentage)
-	{
-		// Calculate discount factor
-		Decimal discountProportion = discountPercentage==null ? 0 : discountPercentage / 100;
-		Decimal factor = 1 - discountProportion;
-		return factor;		
-	}
-		
 	public class Constructor implements fflib_SObjectDomain.IConstructable
 	{
 		public fflib_SObjectDomain construct(List<SObject> sObjectList)
